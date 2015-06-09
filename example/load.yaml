@@ -2,6 +2,7 @@
   config: tank_dc1_config.ini
   log_name: task-A
   download: ['*.log','*.ini']
+  upload: ['*.ammo']
   expected_codes: [0]
   options:
     DEFAULT.target: dc1.example.org
