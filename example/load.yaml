@@ -1,0 +1,19 @@
+- tanks: ['tank1.dc1']
+  config: tank_dc1_config.ini
+  log_name: task-A
+  download: ['*.log','*.ini']
+  expected_codes: [0]
+  options:
+    DEFAULT.target: dc1.example.org
+    DEFAULT.target_group: test
+    phantom.ammofile: /my/path/to/ammo.txt
+- tanks: ['tank1.dc2', 'tank2.dc2']
+  log_name: task-B
+  config: tank_dc2_config.ini
+  download: ['*.log','*.ini']
+  expected_codes: [0]
+  options:
+    DEFAULT.target: dc2.example.org
+    DEFAULT.target_group: test
+    phantom.uris: /ping
+
