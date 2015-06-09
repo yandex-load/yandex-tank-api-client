@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 from trollius import coroutine, sleep, Return, CancelledError, From, gather, async
 
-import yandex_tank_api_client as tankapi
+import tankapi
 
 
 @coroutine
