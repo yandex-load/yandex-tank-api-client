@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 from trollius import coroutine, sleep, Return, CancelledError, From, gather, async
 
-import tankapi
+import yandex_tank_api_client.session as tankapi
 
 
 @coroutine
@@ -25,7 +25,12 @@ def shoot(*cfgs):
     Returns list of test ID's.
     Raises TankLocked and TestFailed.
     """
-    sessions = [Session(**cfg) for cfg in cfgs]
+    try:
+        sessions = [Session(**cfg) for cfg in cfgs]
+    except Exception:
+        logger.exception("Failed to initialize session objects, config:\n%s",
+            yaml.safe_dump(cfgs))
+        raise
     prepares = []
     runs = []
     stops = []
