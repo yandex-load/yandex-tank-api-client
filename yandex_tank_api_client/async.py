@@ -130,6 +130,7 @@ class Session(object):
             self.tank_config += tankapi.make_ini(options)
 
             self.download_list = params.get('download', [])
+            self.upload_list = params.get('upload', [])
             self.start_timeout = params.get('start_timeout', 14400)
             self.expected_codes = params.get('expected_codes', [0])
         except Exception:
@@ -138,9 +139,9 @@ class Session(object):
         try:
             _ = [int(code) for code in self.expected_codes]
         except ValueError:
-            raise ValueError('expected_codes should be iterable of INTS')
+            raise ValueError('expected_codes should be an iterable of INTEGERS')
         except TypeError:
-            raise ValueError('expected_codes should be an ITERABLE of ints')
+            raise ValueError('expected_codes should be an ITERABLE of integers')
 
     @coroutine
     def prepare(self):
@@ -227,6 +228,10 @@ class Session(object):
             raise tankapi.RetryLater(str(exc), {})
         self.log.info("Started session = %s, test_id = %s",
                       self.session.s_id, self.session.test_id)
+        if self.upload:
+            yield From(self._run_until_stage_completion('configure'))
+            for filepath in self.upload:
+                self.session.upload(filepath)
         yield From(self._run_until_stage_completion('prepare'))
 
     @coroutine
