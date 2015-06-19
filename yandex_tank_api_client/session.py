@@ -69,6 +69,18 @@ class Client(object):
             raise APIError("Failed to obtain artifact list", response)
         return response
 
+    def upload_test_file(self, local_filename, remote_filename, session_id):
+        """
+        Downloads single artifact file from tank
+        """
+        url = '/artifact?session=%s&filename=%s' % (session_id, remote_filename)
+        http_code, contents = self._get_str(url)
+        if http_code != 200:
+            raise APIError("Failed to upload file", json.loads(contents))
+        artifact_file = open(local_filename, 'w')
+        artifact_file.write(contents)
+
+
     def download_test_artifact(self, remote_filename, local_filename, test_id):
         """
         Downloads single artifact file from tank
