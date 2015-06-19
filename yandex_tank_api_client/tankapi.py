@@ -54,7 +54,7 @@ class Client(object):
     def __init__(self, tank, api_port=8888):
         self._tank = tank
         self.url_base = 'http://%s:%s' % (tank, api_port)
-        self.log=logging.getLogger("Tank "+tank)
+        self.log = logging.getLogger("Tank " + tank)
 
     @property
     def tank(self):
@@ -200,6 +200,7 @@ def make_ini(params):
 
     returns .ini-formatted output, options order is preserved
     """
+    # TODO: group options from one section
     lines = []
     section = None
     for name, value in params:
