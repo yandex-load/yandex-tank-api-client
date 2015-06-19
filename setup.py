@@ -5,7 +5,7 @@ except ImportError:
     from distutils.core import setup
 
 setup(
-    name='yandex_tank_api_client',
+    name='yandex-tank-api-client',
     version='0.0.2',
     description='yandex-tank-api client python module',
     long_description="""

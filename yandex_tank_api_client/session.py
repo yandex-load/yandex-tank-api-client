@@ -54,7 +54,7 @@ class Client(object):
     def __init__(self, tank, api_port=8888):
         self._tank = tank
         self.url_base = 'http://%s:%s' % (tank, api_port)
-        self.log=logging.getLogger("Tank "+tank)
+        self.log = logging.getLogger("Tank " + tank)
 
     @property
     def tank(self):
@@ -68,18 +68,6 @@ class Client(object):
         if http_code != 200:
             raise APIError("Failed to obtain artifact list", response)
         return response
-
-    def upload_test_file(self, local_filename, remote_filename, session_id):
-        """
-        Downloads single artifact file from tank
-        """
-        url = '/artifact?session=%s&filename=%s' % (session_id, remote_filename)
-        http_code, contents = self._get_str(url)
-        if http_code != 200:
-            raise APIError("Failed to upload file", json.loads(contents))
-        artifact_file = open(local_filename, 'w')
-        artifact_file.write(contents)
-
 
     def download_test_artifact(self, remote_filename, local_filename, test_id):
         """
@@ -115,7 +103,7 @@ class Client(object):
                            http_code, str_response)
         else:
             self.log.debug(
-                    "API returned code %s, content length>1KB", http_code)
+                "API returned code %s, content length>1KB", http_code)
         return (http_code, str_response)
 
     def _get_json(self, url, post_contents=None):
@@ -204,6 +192,18 @@ class Session(Client):
             local_filename,
             self._test
         )
+
+    def upload(self, local_path, remote_filename):
+        """
+        Uploads single file to tank
+        """
+        url = '/artifact?session=%s&filename=%s' % (
+            self._session, remote_filename)
+        contents = open(local_path, 'rb').read()
+        http_code, reply = self._get_json(url, post_contents=contents)
+        if http_code != 200:
+            raise APIError("Failed to upload file", json.loads(reply))
+        return reply
 
 
 def make_ini(params):

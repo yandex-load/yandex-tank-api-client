@@ -12,7 +12,8 @@ import urllib2
 import yaml
 logger = logging.getLogger(__name__)
 
-from trollius import coroutine, sleep, Return, CancelledError, From, gather, async
+from trollius import coroutine, sleep, Return,\
+    CancelledError, From, gather, async
 
 import yandex_tank_api_client.session as tankapi
 
@@ -26,10 +27,10 @@ def shoot(*cfgs):
     Raises TankLocked and TestFailed.
     """
     try:
-        sessions = [Session(**cfg) for cfg in cfgs]
+        sessions = [Session(**cfg) for cfg in cfgs]#pylint: disable=W0142
     except Exception:
         logger.exception("Failed to initialize session objects, config:\n%s",
-            yaml.safe_dump(cfgs))
+                         yaml.safe_dump(cfgs))
         raise
     prepares = []
     runs = []
@@ -37,10 +38,10 @@ def shoot(*cfgs):
     try:
         try:
             prepares = [async(session.prepare()) for session in sessions]
-            yield From(gather(*prepares))
+            yield From(gather(*prepares)) #pylint: disable=W0142
             logger.info("All tanks are prepared. STARTING TO SHOOT.")
             runs = [async(session.run()) for session in sessions]
-            yield From(gather(*runs))
+            yield From(gather(*runs))#pylint: disable=W0142
         except KeyboardInterrupt:
             logger.info("Test interrupted")
             raise
@@ -56,7 +57,7 @@ def shoot(*cfgs):
     except BaseException as ex:
         logger.info("Stopping remaining tank sessions...")
         stops = [async(session.stop()) for session in sessions]
-        yield From(gather(*stops, return_exceptions=True))
+        yield From(gather(*stops, return_exceptions=True))#pylint: disable=W0142
         raise ex
     finally:
         for task in prepares + runs + stops:
@@ -124,13 +125,27 @@ class Session(object):
                     value = ''
                 options.append((key, value))
 
-            self.tank_config = ''
             if 'config' in params and params['config']:
-                self.tank_config += open(params['config']).read()
+                if isinstance(params['config'], str):
+                    config_files = [params['config']]
+                elif isinstance(params['config'], list):
+                    config_files = params['config']
+                else:
+                    raise ValueError("Bad config entry")
+            self.tank_config = '\n\n'.join(
+                open(cnf).read() for cnf in config_files)
             self.tank_config += tankapi.make_ini(options)
 
             self.download_list = params.get('download', [])
-            self.upload_list = params.get('upload', [])
+            self.upload = []
+            for entry in params.get('upload', []):
+                if isinstance(entry, str):
+                    _, target_file = os.path.split(entry)
+                    self.upload.append((entry, target_file))
+                elif isinstance(entry, dict) and len(entry) == 1:
+                    self.upload.append((entry.keys()[0], entry.values()[0]))
+                else:
+                    raise ValueError("Malformed upload section: " + str(entry))
             self.start_timeout = params.get('start_timeout', 14400)
             self.expected_codes = params.get('expected_codes', [0])
         except Exception:
@@ -139,9 +154,11 @@ class Session(object):
         try:
             _ = [int(code) for code in self.expected_codes]
         except ValueError:
-            raise ValueError('expected_codes should be an iterable of INTEGERS')
+            raise ValueError(
+                'expected_codes should be an iterable of INTEGERS')
         except TypeError:
-            raise ValueError('expected_codes should be an ITERABLE of integers')
+            raise ValueError(
+                'expected_codes should be an ITERABLE of integers')
 
     @coroutine
     def prepare(self):
@@ -230,8 +247,8 @@ class Session(object):
                       self.session.s_id, self.session.test_id)
         if self.upload:
             yield From(self._run_until_stage_completion('configure'))
-            for filepath in self.upload:
-                self.session.upload(filepath)
+            for local_path, remote_name in self.upload:
+                self.session.upload(local_path, remote_name)
         yield From(self._run_until_stage_completion('prepare'))
 
     @coroutine
@@ -244,7 +261,8 @@ class Session(object):
             try:
                 self.session.set_breakpoint('finished')
             except tankapi.APIError as api_err:
-                if api_err.get('status', '--unknown--') not in ('success', 'failed'):
+                if api_err.get('status', '--unknown--')\
+                        not in ('success', 'failed'):
                     raise
             status = yield From(
                 self._run_until_stage_completion()
@@ -318,7 +336,8 @@ class Session(object):
             else:
                 poll_failure_count = 0
                 if 'failures' in status and \
-                        any(flr['stage'] == 'lock' for flr in status['failures']):
+                        any(flr['stage'] == 'lock'\
+                            for flr in status['failures']):
                     self.log.info("%s is locked", self.session.tank)
                     raise tankapi.RetryLater()
 
