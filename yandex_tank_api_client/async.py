@@ -64,7 +64,7 @@ def shoot(*cfgs):
             task.cancel()
     logger.info("All tanks are done.")
     raise Return([
-        session.session.test_id
+        session.session.s_id
         if session.session is not None else None
         for session in sessions
     ])
@@ -118,9 +118,9 @@ class Session(object):
             self.tanks = params.get('tanks', [])
             if 'tank' in params:
                 self.tanks.append(params['tank'])
-
+		
             options = []
-            for key, value in params['options'].iteritems():
+            for key, value in params.get('options',{}).iteritems():
                 if value is None:
                     value = ''
                 options.append((key, value))
@@ -142,12 +142,18 @@ class Session(object):
                 if isinstance(entry, str):
                     _, target_file = os.path.split(entry)
                     self.upload.append((entry, target_file))
-                elif isinstance(entry, dict) and len(entry) == 1:
-                    self.upload.append((entry.keys()[0], entry.values()[0]))
                 else:
-                    raise ValueError("Malformed upload section: " + str(entry))
+                    try:
+		        if len(entry) != 2:
+		            raise ValueError("")
+                    except:
+                        raise ValueError("Malformed upload section: " + str(entry))
+                    else:
+                        self.upload.append(entry)
+	
             self.start_timeout = params.get('start_timeout', 14400)
             self.expected_codes = params.get('expected_codes', [0])
+	    self.artifacts_by_session = params.get('artifacts_by_session', False)
         except Exception:
             self.log.exception("Failed to initialize Session object")
             raise
@@ -233,22 +239,23 @@ class Session(object):
         Raises tankapi.RetryLater if tank is busy
         Should not be called after some session was successfully acquired
         """
+	first_break = 'configure' if self.upload else 'start'
         self.log.info("Trying to start session at %s ...", tank)
         try:
             self.session = tankapi.Session(
                 tank=tank,
                 config_contents=self.tank_config,
-                stage='start'
+                stage=first_break
             )
         except urllib2.URLError as exc:
             self.log.exception("Failed to communicate with %s", tank)
             raise tankapi.RetryLater(str(exc), {})
-        self.log.info("Started session = %s, test_id = %s",
-                      self.session.s_id, self.session.test_id)
+        self.log.info("Started session %s",self.session.s_id)
         if self.upload:
-            yield From(self._run_until_stage_completion('configure'))
+            yield From(self._run_until_stage_completion('init'))
             for local_path, remote_name in self.upload:
                 self.session.upload(local_path, remote_name)
+            self.session.set_breakpoint('start')	 
         yield From(self._run_until_stage_completion('prepare'))
 
     @coroutine
@@ -281,12 +288,16 @@ class Session(object):
 
     def _download_artifacts(self):
         """Downloads files by mask into specified dir"""
-        try:
-            os.makedirs(self.session.test_id)
-        except OSError:
-            self.log.exception("Failed to create artifact directory %s",
-                               self.session.test_id)
-            return
+	if self.artifacts_by_session:
+	    artifact_dir = self.session.s_id
+	    try:
+	        os.makedirs(self.session.s_id)
+	    except OSError:
+	        self.log.exception("Failed to create artifact directory %s",
+				       self.session.s_id)
+	    return
+	else:
+            artifact_dir = '.'
         try:
             artifacts = self.session.get_artifact_list()
         except tankapi.APIError:
@@ -302,7 +313,7 @@ class Session(object):
                     self.log.info("Downloading %s from %s",
                                   art, self.session.tank)
                     self.session.download_artifact(
-                        art, os.path.join(self.session.test_id, art))
+                        art, os.path.join(artifact_dir, art))
                 except urllib2.URLError:
                     self.log.exception(
                         "Failed to download %s from %s", art, self.session.tank)

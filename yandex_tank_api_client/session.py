@@ -15,7 +15,7 @@ import yaml
 import json
 import urllib2
 import logging
-
+import re
 
 class APIError(RuntimeError):
 
@@ -53,7 +53,10 @@ class Client(object):
 
     def __init__(self, tank, api_port=8888):
         self._tank = tank
-        self.url_base = 'http://%s:%s' % (tank, api_port)
+        if re.match('.*?\:\d+',tank):
+            self.url_base = 'http://'+tank
+	else:
+	    self.url_base = 'http://%s:%s' % (tank, api_port)
         self.log = logging.getLogger("Tank " + tank)
 
     @property
@@ -61,19 +64,19 @@ class Client(object):
         """Tank host"""
         return self._tank
 
-    def get_test_artifact_list(self, test_id):
+    def get_test_artifact_list(self, session_id):
         '''['filename1', 'filename2', ...]'''
-        url = '/artifact?test=' + test_id
+        url = '/artifact?session=' + session_id
         http_code, response = self._get_json(url)
         if http_code != 200:
             raise APIError("Failed to obtain artifact list", response)
         return response
 
-    def download_test_artifact(self, remote_filename, local_filename, test_id):
+    def download_test_artifact(self, remote_filename, local_filename, session_id):
         """
         Downloads single artifact file from tank
         """
-        url = '/artifact?test=%s&filename=%s' % (test_id, remote_filename)
+        url = '/artifact?session=%s&filename=%s' % (session_id, remote_filename)
         http_code, contents = self._get_str(url)
         if http_code == 503:
             raise RetryLater(
@@ -138,7 +141,6 @@ class Session(Client):
         http_code, response = self._get_json(url, config_contents)
         if http_code == 200:
             self._session = response['session']
-            self._test = response['test']
         elif http_code == 503:
             raise RetryLater("Failed to start session", response)
         else:
@@ -149,13 +151,8 @@ class Session(Client):
         """Session ID"""
         return self._session
 
-    @property
-    def test_id(self):
-        """Test ID"""
-        return self._test
-
     def set_breakpoint(self, stage='finished'):
-        '''{"test": test_id, "session": session_id}'''
+        '''{"session": session_id}'''
         url = '/run?session=%s&break=%s' % (self._session, stage)
         http_code, response = self._get_json(url)
         if http_code != 200:
@@ -183,21 +180,21 @@ class Session(Client):
 
     def get_artifact_list(self):
         '''['filename1', 'filename2', ...]'''
-        return self.get_test_artifact_list(self._test)
+        return self.get_test_artifact_list(self._session)
 
     def download_artifact(self, remote_filename, local_filename):
         """Downloads artifact for current test session"""
         return self.download_test_artifact(
             remote_filename,
             local_filename,
-            self._test
+            self._session
         )
 
     def upload(self, local_path, remote_filename):
         """
         Uploads single file to tank
         """
-        url = '/artifact?session=%s&filename=%s' % (
+        url = '/upload?session=%s&filename=%s' % (
             self._session, remote_filename)
         contents = open(local_path, 'rb').read()
         http_code, reply = self._get_json(url, post_contents=contents)
