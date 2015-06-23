@@ -20,19 +20,18 @@ import yandex_tank_api_client.session as tankapi
 
 
 @coroutine
-def shoot(*cfgs):
+def shoot(cfgs, status_callback):
     """
     Performs multi-tank multi-config test.
     Accepts one or more config dicts.
     Returns list of test ID's.
     Raises TankLocked and TestFailed.
     """
-    def status_callback(id, status):  # TODO: get this func as a param
-        pass
+
     try:
         sessions = [
             SessionWrapper(ft.partial(  # pylint: disable=W0142
-                status_callback, i), **cfg)  # TODO: actual id
+                status_callback, i), **cfg)
             for i, cfg in enumerate(cfgs)]
     except Exception:
         logger.exception("Failed to initialize session objects, config:\n%s",
