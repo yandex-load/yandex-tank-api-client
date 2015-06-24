@@ -164,6 +164,7 @@ class Session(Client):
         http_code, response = self._get_json(url)
         if http_code != 200:
             raise APIError("Failed to obtain session status", response)
+        response['tank'] = self.tank
         return response
 
     def stop(self):
