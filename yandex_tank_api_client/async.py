@@ -201,7 +201,6 @@ class SessionWrapper(object):
     def run(self):
         """Runs single test"""
         self.session.set_breakpoint("unlock")
-        yield From(self._run_until_stage_completion('postprocess'))
         yield From(self._finish())
 
     @coroutine
@@ -237,6 +236,8 @@ class SessionWrapper(object):
             break
 
         if wait:
+	    self.log.info("Waiting for session  %s at tank %s to stop",
+                          self.session.s_id, self.session.tank)
             yield From(self._finish())
 
     @coroutine
@@ -268,8 +269,10 @@ class SessionWrapper(object):
     @coroutine
     def _finish(self):
         """
-        Download artifacts and finalize session (if any)
+        Wait for postprocess, download artifacts and finalize session (if any)
         """
+        yield From(self._run_until_stage_completion('postprocess'))
+
         try:
             self._download_artifacts()
             try:
