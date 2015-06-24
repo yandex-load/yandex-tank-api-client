@@ -24,7 +24,7 @@ def shoot(cfgs, status_callback):
     """
     Performs multi-tank multi-config test.
     Accepts one or more config dicts.
-    Returns list of test ID's.
+    Returns list of session ID's.
     Raises TankLocked and TestFailed.
     """
 
@@ -53,8 +53,8 @@ def shoot(cfgs, status_callback):
         except CancelledError:
             logger.info("Test cancelled")
             raise
-        except tankapi.APIError:
-            logger.warning("API Server returned error:", exc_info=True)
+        except TestFailed:
+            logger.info("Test failed")
             raise 
         except Exception:
             logger.exception("Exception occured in Test.run_until_finish()")
@@ -64,7 +64,7 @@ def shoot(cfgs, status_callback):
             raise
     except BaseException as ex:
         logger.info("Stopping remaining tank sessions...")
-        stops = [async(session.stop()) for session in sessions]
+        stops = [async(session.stop()) for session in sessions if not session.finished]
         yield From(gather(*stops, return_exceptions=True))  # pylint: disable=W0142
         raise ex
     finally:
@@ -121,6 +121,7 @@ class SessionWrapper(object):
 
     def __init__(self, status_callback, **params):
         self.session = None
+        self.finished = False
         self.status_callback = status_callback
         log_name = params.get('log_name', params.get(
             'options', {}).get('meta.job_name', __name__))
@@ -239,7 +240,8 @@ class SessionWrapper(object):
                 "Failed to finalize session %s on tank %s",
                 self.session.s_id, self.session.tank,exc_info=True)
 
-        self.log.info("Test failed")
+        self.log.warning("Session %s on tank %s failed",
+                       self.session.s_id, self.session.tank)
         raise TestFailed(status)
 
 
@@ -250,7 +252,11 @@ class SessionWrapper(object):
         Catches all exceptions from tankapi client.
         """
         if self.session is None:
-            self.log.info("No session to stop")
+            self.log.debug("Cannot stop: no session obtained")
+            raise Return()
+        if self.finished:
+            self.log.debug("Session %s on tank %s has already finished",
+                           self.session.s_id,self.session.tank)
             raise Return()
         n_stop_attempts = 0
         while True:
@@ -377,6 +383,7 @@ class SessionWrapper(object):
                     raise tankapi.RetryLater()
 
                 if status['status'] == 'failed':
+                    self.finished = True
                     self.log.warning(
                         "Session %s on %s failed:\n%s",
                         self.session.s_id,
@@ -388,6 +395,7 @@ class SessionWrapper(object):
                     raise TestFailed(status)
 
                 if status['status'] == 'success':
+                    self.finished = True
                     self.log.info("Session %s finished successfully",
                                   self.session.s_id)
                     raise Return(status)
