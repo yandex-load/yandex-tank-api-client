@@ -45,7 +45,7 @@ def shoot(cfgs, status_callback):
             prepares = [async(session.prepare()) for session in sessions]
             yield From(gather(*prepares))  # pylint: disable=W0142
             logger.info("All tanks are prepared. STARTING TO SHOOT.")
-            runs = [async(session.run()) for session in sessions]
+            runs = [async(session.run_until_finish()) for session in sessions]
             yield From(gather(*runs))  # pylint: disable=W0142
         except KeyboardInterrupt:
             logger.info("Test interrupted")
@@ -54,10 +54,10 @@ def shoot(cfgs, status_callback):
             logger.info("Test cancelled")
             raise
         except Exception:
-            logger.exception("Exception occured in Test.run()")
+            logger.exception("Exception occured in Test.run_until_finish()")
             raise
         except BaseException:
-            logger.exception("Something strange caught by Test.run()")
+            logger.exception("Something strange caught by Test.run_until_finish()")
             raise
     except BaseException as ex:
         logger.info("Stopping remaining tank sessions...")
@@ -107,8 +107,11 @@ class TestFailed(RuntimeError):
 class SessionWrapper(object):
 
     """
-    run():
-        starts test, downloads artifacts and waits for finish
+    prepare():
+        obtains tank, uploads files 
+        and returns when 'prepare' stage is completed
+    run_until_finish():
+        continues test, downloads artifacts and waits for finish
     stop():
         stops test at arbitratry point
     """
@@ -198,10 +201,43 @@ class SessionWrapper(object):
             yield From(sleep(5))
 
     @coroutine
-    def run(self):
-        """Runs single test"""
-        self.session.set_breakpoint("unlock")
-        yield From(self._finish())
+    def run_until_finish(self):
+        """
+        Wait for postprocess, download artifacts and finalize session (if any)
+        """
+	try:
+            self.session.set_breakpoint("unlock")
+        except tankapi.NothingDone as err:
+            self.log.warn(str(err))
+
+        self.log.info("Waiting for session  %s at tank %s to stop",
+                          self.session.s_id, self.session.tank)
+        
+        yield From(self._run_until_stage_completion('postprocess'))
+
+        try:
+            self._download_artifacts()
+            try:
+                self.session.set_breakpoint('finished')
+            except tankapi.APIError as api_err:
+                if api_err.get('status', '--unknown--')\
+                        not in ('success', 'failed'):
+                    raise
+            status = yield From(
+                self._run_until_stage_completion()
+            )
+            if status['status'] == 'success' and\
+                    (status['retcode'] is not None and
+                     int(status['retcode']) in self.expected_codes):
+                self.log.info("Test succeded")
+                raise Return()
+        except tankapi.APIError:
+            self.log.exception(
+                "Failed to finalize session %s", self.session.s_id)
+
+        self.log.info("Test failed")
+        raise TestFailed(status)
+
 
     @coroutine
     def stop(self, wait=True):
@@ -236,9 +272,7 @@ class SessionWrapper(object):
             break
 
         if wait:
-	    self.log.info("Waiting for session  %s at tank %s to stop",
-                          self.session.s_id, self.session.tank)
-            yield From(self._finish())
+            yield From(self.run_until_finish())
 
     @coroutine
     def _prepare_tank(self, tank):
@@ -266,38 +300,11 @@ class SessionWrapper(object):
             self.session.set_breakpoint('start')
         yield From(self._run_until_stage_completion('prepare'))
 
-    @coroutine
-    def _finish(self):
-        """
-        Wait for postprocess, download artifacts and finalize session (if any)
-        """
-        yield From(self._run_until_stage_completion('postprocess'))
-
-        try:
-            self._download_artifacts()
-            try:
-                self.session.set_breakpoint('finished')
-            except tankapi.APIError as api_err:
-                if api_err.get('status', '--unknown--')\
-                        not in ('success', 'failed'):
-                    raise
-            status = yield From(
-                self._run_until_stage_completion()
-            )
-            if status['status'] == 'success' and\
-                    (status['retcode'] is not None and
-                     int(status['retcode']) in self.expected_codes):
-                self.log.info("Test succeded")
-                raise Return()
-        except tankapi.APIError:
-            self.log.exception(
-                "Failed to finalize session %s", self.session.s_id)
-
-        self.log.info("Test failed")
-        raise TestFailed(status)
-
     def _download_artifacts(self):
         """Downloads files by mask into specified dir"""
+        self.log.info("Downloading artifacts for session  %s from tank %s",
+                          self.session.s_id, self.session.tank)
+ 
         if self.artifacts_by_session:
             artifact_dir = self.session.s_id
             try:
@@ -366,8 +373,9 @@ class SessionWrapper(object):
 
                 if status['status'] == 'failed':
                     self.log.warning(
-                        "Session %s failed:\n%s",
+                        "Session %s on %s failed:\n%s",
                         self.session.s_id,
+                        self.session.tank,
                         yaml.safe_dump(status.get('failures', {}))
                     )
                     raise TestFailed(status)

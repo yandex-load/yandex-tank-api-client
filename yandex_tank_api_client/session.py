@@ -155,6 +155,8 @@ class Session(Client):
         '''{"session": session_id}'''
         url = '/run?session=%s&break=%s' % (self._session, stage)
         http_code, response = self._get_json(url)
+        if http_code == 418:
+            raise NothingDone("Cannot move break backwards", response)
         if http_code != 200:
             raise APIError("Failed to change breakpoint", response)
 
