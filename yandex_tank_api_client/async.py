@@ -376,7 +376,9 @@ class SessionWrapper(object):
                         "Session %s on %s failed:\n%s",
                         self.session.s_id,
                         self.session.tank,
-                        yaml.safe_dump(status.get('failures', {}))
+                        '\n'.join(
+                            f.get('reason', '__reason not specified__')
+                            for f in status.get('failures', {}))
                     )
                     raise TestFailed(status)
 
