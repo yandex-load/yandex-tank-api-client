@@ -368,7 +368,9 @@ class SessionWrapper(object):
                     self.log.warning(
                         "Session %s failed:\n%s",
                         self.session.s_id,
-                        status.get('failures', {}).get('reason', '...')
+                        '\n'.join(
+                            f.get('reason', '...')
+                            for f in status.get('failures', {}))
                     )
                     self.log.debug(
                         yaml.safe_dump(status.get('failures', {}))
