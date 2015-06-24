@@ -23,7 +23,7 @@ class APIError(RuntimeError):
     Raised when tank replies with error code and valid json
     """
 
-    def __init__(self, msg, response):
+    def __init__(self, msg='', response={}):
         full_msg = '\n'.join((msg, yaml.safe_dump(response)))
         RuntimeError.__init__(self, full_msg)
         self.response = response

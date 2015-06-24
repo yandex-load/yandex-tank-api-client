@@ -53,6 +53,9 @@ def shoot(cfgs, status_callback):
         except CancelledError:
             logger.info("Test cancelled")
             raise
+        except tankapi.APIError:
+            logger.warning("API Server returned error:", exc_info=True)
+            raise 
         except Exception:
             logger.exception("Exception occured in Test.run_until_finish()")
             raise
@@ -232,8 +235,9 @@ class SessionWrapper(object):
                 self.log.info("Test succeded")
                 raise Return()
         except tankapi.APIError:
-            self.log.exception(
-                "Failed to finalize session %s", self.session.s_id)
+            self.log.warning(
+                "Failed to finalize session %s on tank %s",
+                self.session.s_id, self.session.tank,exc_info=True)
 
         self.log.info("Test failed")
         raise TestFailed(status)
@@ -290,7 +294,7 @@ class SessionWrapper(object):
                 stage=first_break
             )
         except urllib2.URLError as exc:
-            self.log.exception("Failed to communicate with %s", tank)
+            self.log.warning("Failed to communicate with %s", tank, exc_info=True)
             raise tankapi.RetryLater(str(exc), {})
         self.log.info("Started session %s", self.session.s_id)
         if self.upload:
@@ -309,16 +313,17 @@ class SessionWrapper(object):
             artifact_dir = self.session.s_id
             try:
                 os.makedirs(self.session.s_id)
-            except OSError:
-                self.log.exception("Failed to create artifact directory %s",
-                                   self.session.s_id)
+            except OSError as err:
+                self.log.warning(
+                    "Failed to create artifact directory %s: %s",
+                    self.session.s_id,str(err))
             return
         else:
             artifact_dir = '.'
         try:
             artifacts = self.session.get_artifact_list()
         except tankapi.APIError:
-            self.log.exception("Failed to obtain artifact list")
+            self.log.error("Failed to obtain artifact list: %s",str(err))
             return
         except urllib2.URLError:
             self.log.exception("Failed to obtain artifact list")
