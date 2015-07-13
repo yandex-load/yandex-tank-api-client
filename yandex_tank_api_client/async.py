@@ -366,7 +366,7 @@ class Session(object):
                     raise Return(status)
             yield From(sleep(poll_interval))
         self.log.warning("Exceeded poll failure limit")
-        if status is None or status['stage'] == 'lock':
+        if status is None or status['stage'] in ('init','lock'):
             # We have not locked the tank yet
             raise tankapi.RetryLater()
         # We have locked the tank and it died quietly
