@@ -10,6 +10,7 @@ import os.path
 import logging
 import urllib2
 import yaml
+import functools as ft
 logger = logging.getLogger(__name__)
 
 from trollius import coroutine, sleep, Return,\
@@ -19,15 +20,19 @@ import yandex_tank_api_client.session as tankapi
 
 
 @coroutine
-def shoot(*cfgs):
+def shoot(cfgs, status_callback):
     """
     Performs multi-tank multi-config test.
     Accepts one or more config dicts.
-    Returns list of test ID's.
+    Returns list of session ID's.
     Raises TankLocked and TestFailed.
     """
+
     try:
-        sessions = [Session(**cfg) for cfg in cfgs]#pylint: disable=W0142
+        sessions = [
+            SessionWrapper(ft.partial(  # pylint: disable=W0142
+                status_callback, i), **cfg)
+            for i, cfg in enumerate(cfgs)]
     except Exception:
         logger.exception("Failed to initialize session objects, config:\n%s",
                          yaml.safe_dump(cfgs))
@@ -38,33 +43,36 @@ def shoot(*cfgs):
     try:
         try:
             prepares = [async(session.prepare()) for session in sessions]
-            yield From(gather(*prepares)) #pylint: disable=W0142
+            yield From(gather(*prepares))  # pylint: disable=W0142
             logger.info("All tanks are prepared. STARTING TO SHOOT.")
-            runs = [async(session.run()) for session in sessions]
-            yield From(gather(*runs))#pylint: disable=W0142
+            runs = [async(session.run_until_finish()) for session in sessions]
+            yield From(gather(*runs))  # pylint: disable=W0142
         except KeyboardInterrupt:
             logger.info("Test interrupted")
             raise
         except CancelledError:
             logger.info("Test cancelled")
             raise
+        except TestFailed:
+            logger.info("Test failed")
+            raise 
         except Exception:
-            logger.exception("Exception occured in Test.run()")
+            logger.exception("Exception occured in Test.run_until_finish()")
             raise
         except BaseException:
-            logger.exception("Something strange caught by Test.run()")
+            logger.exception("Something strange caught by Test.run_until_finish()")
             raise
     except BaseException as ex:
         logger.info("Stopping remaining tank sessions...")
-        stops = [async(session.stop()) for session in sessions]
-        yield From(gather(*stops, return_exceptions=True))#pylint: disable=W0142
+        stops = [async(session.stop()) for session in sessions if not session.finished]
+        yield From(gather(*stops, return_exceptions=True))  # pylint: disable=W0142
         raise ex
     finally:
         for task in prepares + runs + stops:
             task.cancel()
     logger.info("All tanks are done.")
     raise Return([
-        session.session.test_id
+        session.session.s_id
         if session.session is not None else None
         for session in sessions
     ])
@@ -99,17 +107,22 @@ class TestFailed(RuntimeError):
         self.status = status
 
 
-class Session(object):
+class SessionWrapper(object):
 
     """
-    run():
-        starts test, downloads artifacts and waits for finish
+    prepare():
+        obtains tank, uploads files 
+        and returns when 'prepare' stage is completed
+    run_until_finish():
+        continues test, downloads artifacts and waits for finish
     stop():
         stops test at arbitratry point
     """
 
-    def __init__(self, **params):
+    def __init__(self, status_callback, **params):
         self.session = None
+        self.finished = False
+        self.status_callback = status_callback
         log_name = params.get('log_name', params.get(
             'options', {}).get('meta.job_name', __name__))
         self.log = logging.getLogger(log_name)
@@ -118,9 +131,8 @@ class Session(object):
             self.tanks = params.get('tanks', [])
             if 'tank' in params:
                 self.tanks.append(params['tank'])
-
             options = []
-            for key, value in params['options'].iteritems():
+            for key, value in params.get('options', {}).iteritems():
                 if value is None:
                     value = ''
                 options.append((key, value))
@@ -142,12 +154,20 @@ class Session(object):
                 if isinstance(entry, str):
                     _, target_file = os.path.split(entry)
                     self.upload.append((entry, target_file))
-                elif isinstance(entry, dict) and len(entry) == 1:
-                    self.upload.append((entry.keys()[0], entry.values()[0]))
                 else:
-                    raise ValueError("Malformed upload section: " + str(entry))
+                    try:
+                        if len(entry) != 2:
+                            raise ValueError("")
+                    except:
+                        raise ValueError(
+                            "Malformed upload section: " + str(entry))
+                    else:
+                        self.upload.append(entry)
+
             self.start_timeout = params.get('start_timeout', 14400)
             self.expected_codes = params.get('expected_codes', [0])
+            self.artifacts_by_session = params.get(
+                'artifacts_by_session', False)
         except Exception:
             self.log.exception("Failed to initialize Session object")
             raise
@@ -185,11 +205,45 @@ class Session(object):
             yield From(sleep(5))
 
     @coroutine
-    def run(self):
-        """Runs single test"""
-        self.session.set_breakpoint("unlock")
+    def run_until_finish(self):
+        """
+        Wait for postprocess, download artifacts and finalize session (if any)
+        """
+	try:
+            self.session.set_breakpoint("unlock")
+        except tankapi.NothingDone as err:
+            self.log.warn(str(err))
+
+        self.log.info("Waiting for session  %s at tank %s to stop",
+                          self.session.s_id, self.session.tank)
+        
         yield From(self._run_until_stage_completion('postprocess'))
-        yield From(self._finish())
+
+        try:
+            self._download_artifacts()
+            try:
+                self.session.set_breakpoint('finished')
+            except tankapi.APIError as api_err:
+                if api_err.get('status', '--unknown--')\
+                        not in ('success', 'failed'):
+                    raise
+            status = yield From(
+                self._run_until_stage_completion()
+            )
+            if status['status'] == 'success' and\
+                    (status['retcode'] is not None and
+                     int(status['retcode']) in self.expected_codes):
+                self.log.info("Test succeded")
+                raise Return()
+        except tankapi.APIError:
+            self.log.warning(
+                "Failed to finalize session %s on tank %s",
+                self.session.s_id, self.session.tank,exc_info=True)
+
+        self.log.warning("Session %s on tank %s failed",
+                       self.session.s_id, self.session.tank)
+        raise TestFailed(status)
+
 
     @coroutine
     def stop(self, wait=True):
@@ -198,7 +252,11 @@ class Session(object):
         Catches all exceptions from tankapi client.
         """
         if self.session is None:
-            self.log.info("No session to stop")
+            self.log.debug("Cannot stop: no session obtained")
+            raise Return()
+        if self.finished:
+            self.log.debug("Session %s on tank %s has already finished",
+                           self.session.s_id,self.session.tank)
             raise Return()
         n_stop_attempts = 0
         while True:
@@ -224,7 +282,7 @@ class Session(object):
             break
 
         if wait:
-            yield From(self._finish())
+            yield From(self.run_until_finish())
 
     @coroutine
     def _prepare_tank(self, tank):
@@ -233,64 +291,45 @@ class Session(object):
         Raises tankapi.RetryLater if tank is busy
         Should not be called after some session was successfully acquired
         """
+        first_break = 'configure' if self.upload else 'start'
         self.log.info("Trying to start session at %s ...", tank)
         try:
             self.session = tankapi.Session(
                 tank=tank,
                 config_contents=self.tank_config,
-                stage='start'
+                stage=first_break
             )
         except urllib2.URLError as exc:
-            self.log.exception("Failed to communicate with %s", tank)
+            self.log.warning("Failed to communicate with %s", tank, exc_info=True)
             raise tankapi.RetryLater(str(exc), {})
-        self.log.info("Started session = %s, test_id = %s",
-                      self.session.s_id, self.session.test_id)
+        self.log.info("Started session %s", self.session.s_id)
         if self.upload:
-            yield From(self._run_until_stage_completion('configure'))
+            yield From(self._run_until_stage_completion('init'))
             for local_path, remote_name in self.upload:
                 self.session.upload(local_path, remote_name)
+            self.session.set_breakpoint('start')
         yield From(self._run_until_stage_completion('prepare'))
-
-    @coroutine
-    def _finish(self):
-        """
-        Download artifacts and finalize session (if any)
-        """
-        try:
-            self._download_artifacts()
-            try:
-                self.session.set_breakpoint('finished')
-            except tankapi.APIError as api_err:
-                if api_err.get('status', '--unknown--')\
-                        not in ('success', 'failed'):
-                    raise
-            status = yield From(
-                self._run_until_stage_completion()
-            )
-            if status['status'] == 'success' and\
-                    (status['retcode'] is not None and
-                     int(status['retcode']) in self.expected_codes):
-                self.log.info("Test succeded")
-                raise Return()
-        except tankapi.APIError:
-            self.log.exception(
-                "Failed to finalize session %s", self.session.s_id)
-
-        self.log.info("Test failed")
-        raise TestFailed(status)
 
     def _download_artifacts(self):
         """Downloads files by mask into specified dir"""
-        try:
-            os.makedirs(self.session.test_id)
-        except OSError:
-            self.log.exception("Failed to create artifact directory %s",
-                               self.session.test_id)
+        self.log.info("Downloading artifacts for session  %s from tank %s",
+                          self.session.s_id, self.session.tank)
+ 
+        if self.artifacts_by_session:
+            artifact_dir = self.session.s_id
+            try:
+                os.makedirs(self.session.s_id)
+            except OSError as err:
+                self.log.warning(
+                    "Failed to create artifact directory %s: %s",
+                    self.session.s_id,str(err))
             return
+        else:
+            artifact_dir = '.'
         try:
             artifacts = self.session.get_artifact_list()
         except tankapi.APIError:
-            self.log.exception("Failed to obtain artifact list")
+            self.log.error("Failed to obtain artifact list: %s",str(err))
             return
         except urllib2.URLError:
             self.log.exception("Failed to obtain artifact list")
@@ -302,7 +341,7 @@ class Session(object):
                     self.log.info("Downloading %s from %s",
                                   art, self.session.tank)
                     self.session.download_artifact(
-                        art, os.path.join(self.session.test_id, art))
+                        art, os.path.join(artifact_dir, art))
                 except urllib2.URLError:
                     self.log.exception(
                         "Failed to download %s from %s", art, self.session.tank)
@@ -335,21 +374,28 @@ class Session(object):
                 poll_failure_count += 1
             else:
                 poll_failure_count = 0
+                if self.status_callback:
+                    self.status_callback(status)
                 if 'failures' in status and \
-                        any(flr['stage'] == 'lock'\
+                        any(flr['stage'] == 'lock'
                             for flr in status['failures']):
                     self.log.info("%s is locked", self.session.tank)
                     raise tankapi.RetryLater()
 
                 if status['status'] == 'failed':
+                    self.finished = True
                     self.log.warning(
-                        "Session %s failed:\n%s",
+                        "Session %s on %s failed:\n%s",
                         self.session.s_id,
-                        yaml.safe_dump(status.get('failures', {}))
+                        self.session.tank,
+                        '\n'.join(
+                            f.get('reason', '__reason not specified__')
+                            for f in status.get('failures', {}))
                     )
                     raise TestFailed(status)
 
                 if status['status'] == 'success':
+                    self.finished = True
                     self.log.info("Session %s finished successfully",
                                   self.session.s_id)
                     raise Return(status)
