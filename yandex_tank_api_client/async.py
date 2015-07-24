@@ -323,7 +323,7 @@ class SessionWrapper(object):
                 self.log.warning(
                     "Failed to create artifact directory %s: %s",
                     self.session.s_id,str(err))
-            return
+                return
         else:
             artifact_dir = '.'
         try:
