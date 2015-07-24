@@ -6,7 +6,7 @@ except ImportError:
 
 setup(
     name='yandex-tank-api-client',
-    version='0.0.3',
+    version='0.0.4',
     description='yandex-tank-api client python module',
     long_description="""
         Classes for working with yandex-tank-api.""",
