@@ -304,7 +304,7 @@ class SessionWrapper(object):
             raise tankapi.RetryLater(str(exc), {})
         self.log.info("Started session %s", self.session.s_id)
         if self.upload:
-            yield From(self._run_until_stage_completion('init'))
+            yield From(self._run_until_stage_completion('lock'))
             for local_path, remote_name in self.upload:
                 self.session.upload(local_path, remote_name)
             self.session.set_breakpoint('start')
