@@ -388,9 +388,12 @@ class SessionWrapper(object):
                         "Session %s on %s failed:\n%s",
                         self.session.s_id,
                         self.session.tank,
-                        '\n'.join(
-                            f.get('reason', '__reason not specified__')
-                            for f in status.get('failures', {}))
+                        '\n'.join('%s: %s' % (
+                            flr.get('stage', '__unknown stage__'),
+                            flr.get('reason', '__reason not specified__')
+                            )
+                            for flr in status.get('failures', [])
+                        )
                     )
                     raise TestFailed(status)
 
