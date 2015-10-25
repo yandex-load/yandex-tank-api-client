@@ -4,10 +4,6 @@ Yandex.Tank API coroutine client capable of multi-tank multi-config tests.
 Note: HTTP requests issued by this module are blocking
 (usually they are small and are processed quickly).
 """
-#pylint: disable=C0301
-#pylint: disable=C0303
-#pylint: disable=C0326
-
 import time
 import fnmatch
 import os.path
@@ -15,7 +11,7 @@ import logging
 import urllib2
 import yaml
 import functools as ft
-logger = logging.getLogger(__name__) #pylint:disable=C0103
+logger = logging.getLogger(__name__)  # pylint:disable=C0103
 
 from trollius import coroutine, sleep, Return,\
     CancelledError, From, gather, async, Condition
@@ -64,11 +60,13 @@ def shoot(cfgs, status_callback):
             logger.exception("Exception occured in Test.run_until_finish()")
             raise
         except BaseException:
-            logger.exception("Something strange caught by Test.run_until_finish()")
+            logger.exception(
+                "Something strange caught by Test.run_until_finish()")
             raise
     except BaseException as ex:
         logger.info("Stopping remaining tank sessions...")
-        stops = [async(session.stop()) for session in sessions if not session.finished]
+        stops = [async(session.stop())
+                 for session in sessions if not session.finished]
         yield From(gather(*stops, return_exceptions=True))  # pylint: disable=W0142
         raise ex
     finally:
@@ -112,11 +110,11 @@ class TestFailed(RuntimeError):
 
 
 class SessionWrapper(object):
-    #pylint: disable=R0902
+    # pylint: disable=R0902
 
     """
     prepare():
-        obtains tank, uploads files 
+        obtains tank, uploads files
         and returns when 'prepare' stage is completed
     run_until_finish():
         continues test, downloads artifacts and waits for finish
@@ -125,15 +123,14 @@ class SessionWrapper(object):
     """
 
     def __init__(self, status_callback, **params):
-        #pylint: disable=R0912
-        #pylint: disable=R0915
-
+        # pylint: disable=R0912
+        # pylint: disable=R0915
 
         self.status_cond = Condition()
         self.poll_loop_task = None
 
-        self.status=dict()
-        self.status_changes=set()
+        self.status = dict()
+        self.status_changes = set()
         self.session = None
         self.finished = False
         self.status_callback = status_callback
@@ -197,6 +194,7 @@ class SessionWrapper(object):
     def __del__(self):
         if self.poll_loop_task is not None:
             self.poll_loop_task.cancel()
+
     @coroutine
     def prepare(self):
         """
@@ -232,8 +230,8 @@ class SessionWrapper(object):
             self.log.warn(str(err))
 
         self.log.info("Waiting for session  %s at tank %s to stop",
-                          self.session.s_id, self.session.tank)
-        
+                      self.session.s_id, self.session.tank)
+
         yield From(self._run_until_stage_completion('postprocess'))
 
         try:
@@ -255,12 +253,11 @@ class SessionWrapper(object):
         except tankapi.APIError:
             self.log.warning(
                 "Failed to finalize session %s on tank %s",
-                self.session.s_id, self.session.tank,exc_info=True)
+                self.session.s_id, self.session.tank, exc_info=True)
 
         self.log.warning("Session %s on tank %s failed",
-                       self.session.s_id, self.session.tank)
+                         self.session.s_id, self.session.tank)
         raise TestFailed(status)
-
 
     @coroutine
     def stop(self, wait=True):
@@ -273,7 +270,7 @@ class SessionWrapper(object):
             raise Return()
         if self.finished:
             self.log.debug("Session %s on tank %s has already finished",
-                           self.session.s_id,self.session.tank)
+                           self.session.s_id, self.session.tank)
             raise Return()
         n_stop_attempts = 0
         while True:
@@ -317,7 +314,8 @@ class SessionWrapper(object):
                 stage=first_break
             )
         except urllib2.URLError as exc:
-            self.log.warning("Failed to communicate with %s", tank, exc_info=True)
+            self.log.warning(
+                "Failed to communicate with %s", tank, exc_info=True)
             raise tankapi.RetryLater(str(exc), {})
         else:
             if self.poll_loop_task is None:
@@ -333,8 +331,8 @@ class SessionWrapper(object):
     def _download_artifacts(self):
         """Downloads files by mask into specified dir"""
         self.log.info("Downloading artifacts for session  %s from tank %s",
-                          self.session.s_id, self.session.tank)
- 
+                      self.session.s_id, self.session.tank)
+
         if self.artifacts_by_session:
             artifact_dir = self.session.s_id
             try:
@@ -342,14 +340,14 @@ class SessionWrapper(object):
             except OSError as err:
                 self.log.warning(
                     "Failed to create artifact directory %s: %s",
-                    self.session.s_id,str(err))
+                    self.session.s_id, str(err))
                 return
         else:
             artifact_dir = '.'
         try:
             artifacts = self.session.get_artifact_list()
         except tankapi.APIError:
-            self.log.error("Failed to obtain artifact list: %s",str(err))
+            self.log.error("Failed to obtain artifact list: %s", str(err))
             return
         except urllib2.URLError:
             self.log.exception("Failed to obtain artifact list")
@@ -368,6 +366,7 @@ class SessionWrapper(object):
                 except tankapi.APIError:
                     self.log.exception(
                         "Failed to download %s from %s", art, self.session.tank)
+
     @coroutine
     def _poll_loop(self, poll_interval=5):
         """
@@ -375,7 +374,7 @@ class SessionWrapper(object):
         """
         while not self.finished:
             status = yield From(self._get_status())
-            yield From(self._handle_status_update(status))            
+            yield From(self._handle_status_update(status))
             yield From(sleep(poll_interval))
 
     @coroutine
@@ -387,38 +386,42 @@ class SessionWrapper(object):
             try:
                 status = self.session.get_status()
             except urllib2.URLError as err:
-                if attempt_no>=(attempts-1):
+                if attempt_no >= (attempts - 1):
                     self.log.error(
-                        "All attempts to obtain session status failed: %s", str(err))
+                        "All attempts to obtain session status failed: %s",
+                        str(err)
+                        )
                     raise Return(None)
                 self.log.warning(
                     "Failed to obtain session status: %s", str(err))
                 yield From(sleep(poll_interval))
             else:
                 raise Return(status)
+
     @coroutine
     def _handle_status_update(self, status):
         """
-        Update self.status, check for difference 
+        Update self.status, check for difference
         and notify coroutines waiting for status change.
         """
         self.status_changes = set()
         if status is None:
             self.status_changes.add('poll_error')
         else:
-            if status!=self.status and self.status_callback:
+            if status != self.status and self.status_callback:
                 self.status_callback(status)
-            for key in ('status','current_stage','stage_completed','failures'):
+            for key in ('status', 'current_stage',
+                    'stage_completed', 'failures'):
                 if status.get(key) != self.status.get(key):
                     self.status_changes.add(key)
             self.status = status
-        if self.status_changes: 
+        if self.status_changes:
             yield From(self.status_cond.acquire())
             self.status_cond.notify_all()
             self.status_cond.release()
         else:
             self.log.debug("Alive, no important status changes")
- 
+
     @coroutine
     def _run_until_stage_completion(self, target_stage=None):
         """
@@ -440,7 +443,8 @@ class SessionWrapper(object):
         :raises  RuntimeError: in case of irrecoverable things
         """
         if 'poll_error' in self.status_changes:
-            if not self.status or self.status['current_stage'] in ('init','lock'):
+            if not self.status or\
+                self.status['current_stage'] in ('init', 'lock'):
                 # We have not locked the tank yet
                 raise tankapi.RetryLater()
             # We have locked the tank and it died quietly
@@ -462,7 +466,7 @@ class SessionWrapper(object):
                     '\n'.join('%s: %s' % (
                         flr.get('stage', '__unknown stage__'),
                         flr.get('reason', '__reason not specified__')
-                        )
+                    )
                         for flr in self.status.get('failures', [])
                     )
                 )
@@ -483,4 +487,3 @@ class SessionWrapper(object):
             '' if completed else 'in'
         )
         return completed and (target_stage == last_stage)
-
