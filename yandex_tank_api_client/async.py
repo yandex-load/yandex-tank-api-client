@@ -135,8 +135,8 @@ class SessionWrapper(object):
         self.finished = False
         self.status_callback = status_callback
         log_name = params.get('log_name', params.get(
-            'options', {}).get('meta.job_name', __name__))
-        self.log = logging.getLogger(log_name)
+            'options', {}).get('meta.job_name', 'tank'))
+        self.log = logger.getChild(log_name)
         try:
 
             self.tanks = params.get('tanks', [])
@@ -242,12 +242,10 @@ class SessionWrapper(object):
                 if api_err.get('status', '--unknown--')\
                         not in ('success', 'failed'):
                     raise
-            status = yield From(
-                self._run_until_stage_completion()
-            )
-            if status['status'] == 'success' and\
-                    (status['retcode'] is not None and
-                     int(status['retcode']) in self.expected_codes):
+            yield From( self._run_until_stage_completion())
+            if self.status['status'] == 'success' and\
+                    (self.status['retcode'] is not None and
+                     int(self.status['retcode']) in self.expected_codes):
                 self.log.info("Test succeded")
                 raise Return()
         except tankapi.APIError:
@@ -257,7 +255,7 @@ class SessionWrapper(object):
 
         self.log.warning("Session %s on tank %s failed",
                          self.session.s_id, self.session.tank)
-        raise TestFailed(status)
+        raise TestFailed(self.status)
 
     @coroutine
     def stop(self, wait=True):
@@ -319,7 +317,7 @@ class SessionWrapper(object):
             raise tankapi.RetryLater(str(exc), {})
         else:
             if self.poll_loop_task is None:
-                self.poll_loop_task = async(self._poll_loop)
+                self.poll_loop_task = async(self._poll_loop())
         self.log.info("Started session %s", self.session.s_id)
         if self.upload:
             yield From(self._run_until_stage_completion('lock'))
@@ -373,9 +371,10 @@ class SessionWrapper(object):
         Poll current session stattus in a loop until finished
         """
         while not self.finished:
-            status = yield From(self._get_status())
-            yield From(self._handle_status_update(status))
+            new_status = yield From(self._get_status())
+            yield From(self._handle_status_update(new_status))
             yield From(sleep(poll_interval))
+        self.log.info("Test finished, stopping to poll tank status.")
 
     @coroutine
     def _get_status(self, poll_interval=5, attempts=6):
@@ -416,6 +415,7 @@ class SessionWrapper(object):
                     self.status_changes.add(key)
             self.status = status
         if self.status_changes:
+            self.log.info("Status changes: %s",', '.join(self.status_changes))		
             yield From(self.status_cond.acquire())
             self.status_cond.notify_all()
             self.status_cond.release()
@@ -433,6 +433,7 @@ class SessionWrapper(object):
         while not self._has_completed(target_stage):
             yield From(self.status_cond.acquire())
             yield From(self.status_cond.wait())
+            self.status_cond.release()
 
     def _has_completed(self, target_stage):
         """
@@ -486,4 +487,4 @@ class SessionWrapper(object):
             last_stage,
             '' if completed else 'in'
         )
-        return completed and (target_stage == last_stage)
+        return completed and target_stage is not None and (target_stage == last_stage)
