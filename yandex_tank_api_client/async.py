@@ -72,6 +72,7 @@ def shoot(cfgs, status_callback):
     finally:
         for task in prepares + runs + stops:
             task.cancel()
+		
     logger.info("All tanks are done.")
     raise Return([
         session.session.s_id
@@ -194,7 +195,7 @@ class SessionWrapper(object):
     def __del__(self):
         if self.poll_loop_task is not None:
             self.poll_loop_task.cancel()
-
+ 	
     @coroutine
     def prepare(self):
         """
@@ -285,13 +286,16 @@ class SessionWrapper(object):
                 if n_stop_attempts < 5:
                     yield From(sleep(5))
                 else:
+                    self.poll_loop_task.cancel()
                     raise
             except:
-                self.log.critical("Failed to stop session %s at tank %s",
+                self.log.critical("Failed to stop session %s at tank %s, leaving in in unknown state",
                                   self.session.s_id, self.session.tank,
                                   exc_info=True)
+                self.poll_loop_task.cancel()
                 raise
-            break
+            else:
+                break
 
         if wait:
             yield From(self.run_until_finish())
@@ -416,6 +420,7 @@ class SessionWrapper(object):
             self.status = status
         if self.status_changes:
             self.log.info("Status changes: %s",', '.join(self.status_changes))		
+            self.log.debug("New status:\n%s", self.status)
             yield From(self.status_cond.acquire())
             self.status_cond.notify_all()
             self.status_cond.release()
